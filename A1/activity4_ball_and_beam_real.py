@@ -27,8 +27,14 @@ Requires the bab_datasets package:
 Run with:  python activity4_ball_and_beam_real.py
 """
 
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
+
+# Output figures are written next to this script (the A1 folder), regardless
+# of the current working directory.
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Reuse the functions implemented for Activities 1-3
 from linear_activities_BLS import (regression_matrix, free_run, evaluate,
@@ -151,7 +157,7 @@ def main():
     ax[1].set_ylabel("y (ball position)")
     ax[1].legend(loc="upper right", fontsize=8)
     fig.tight_layout()
-    fig.savefig("act4_multisine_time_domain.png", dpi=120)
+    fig.savefig(os.path.join(HERE, "act4_multisine_time_domain.png"), dpi=120)
 
     # ----- frequency-domain comparison (test half) -------------------------
     f, m_meas = amplitude_spectrum(Y_test, ts)
@@ -169,7 +175,7 @@ def main():
     ax2.set_ylabel("|Y(f)|")
     ax2.legend(loc="upper right")
     fig2.tight_layout()
-    fig2.savefig("act4_multisine_spectra.png", dpi=120)
+    fig2.savefig(os.path.join(HERE, "act4_multisine_spectra.png"), dpi=120)
 
     print("\nSaved figures: act4_multisine_time_domain.png, "
           "act4_multisine_spectra.png")

@@ -29,9 +29,15 @@ coefficients directly.
 Run with:  python linear_activities_BLS.py
 """
 
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, r2_score
+
+# Output figures are written next to this script (the A1 folder), regardless
+# of the current working directory.
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Reproducibility for any random component
 RNG = np.random.default_rng(0)
@@ -267,7 +273,7 @@ def main():
     ax[1].set_ylabel("y")
     ax[1].legend(loc="upper right")
     fig.tight_layout()
-    fig.savefig("act12_time_domain.png", dpi=120)
+    fig.savefig(os.path.join(HERE, "act12_time_domain.png"), dpi=120)
 
     # ---------- Activity 3: best vs worst model by R^2 (free-run, test) ----
     print("\n" + "=" * 70)
@@ -314,7 +320,7 @@ def main():
         ax_s.legend(loc="upper right")
     axes[-1].set_xlabel("frequency [Hz]")
     fig2.tight_layout()
-    fig2.savefig("act3_spectra.png", dpi=120)
+    fig2.savefig(os.path.join(HERE, "act3_spectra.png"), dpi=120)
 
     print("\nSaved figures: act12_time_domain.png, act3_spectra.png")
     # plt.show()  # uncomment to display interactively
