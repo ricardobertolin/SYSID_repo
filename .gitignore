@@ -1,3 +1,27 @@
-*png
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------------
+# Generated figures
+# ---------------------------------------------------------------------------
+*.png
+
+# ---------------------------------------------------------------------------
+# Downloaded / benchmark data files (not version controlled).
+# Keep the source .py / .ipynb, ignore the bulky data artifacts.
+# ---------------------------------------------------------------------------
 *.mat
-*pyc
+*.lvm
+*.zip
+*.pdf
+*.csv
+*.tdms
+*.asv
+Thumbs.db
+
+# Ignore the A2 external benchmark data directory wholesale
+A2/data/
