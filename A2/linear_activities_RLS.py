@@ -29,8 +29,8 @@ Activity data sources
 ---------------------
   1. Ball-and-hoop system  – bab_datasets package
          pip install git+https://github.com/helonayala/bab_datasets.git
-  2. IFAC SYSID 2015 benchmark – download ZIP from KTH then point
-         IFAC_DATA_DIR at the extracted folder (see comments below)
+  2. MIMO Aluminium-plate benchmark (Pintelon et al., SYSID 2015) – place
+         the .mat files in MIMO_AL_DATA_DIR; one SISO slice is used (scipy)
   3. Wind-turbine blade crack detection – auto-downloaded from Zenodo
          (records/3229743) on first run; requires lvm_read:
          pip install lvm_read
@@ -56,13 +56,26 @@ from linear_activities_BLS import regression_matrix, free_run, evaluate, amplitu
 # ---------------------------------------------------------------------------
 # Data paths for Activities 2 & 3 – update these to your local copies
 # ---------------------------------------------------------------------------
-# Activity 2: IFAC SYSID 2015 benchmark
-#   Paper  : https://doi.org/10.1016/j.ifacol.2015.12.108
-#   Data   : https://www.kth.se/social/group/system-identificatio/page/benchmark-problems/
-# After downloading and extracting, set IFAC_DATA_DIR to the folder that
-# contains the .mat or .csv files, e.g.:
-#   IFAC_DATA_DIR = r"C:\data\ifac2015"
-IFAC_DATA_DIR = os.path.join(HERE, "data", "ifac2015")
+# Activity 2: MIMO Aluminium-plate benchmark (Pintelon et al., SYSID 2015)
+#   Data set folder contains the .mat files
+#       Al_plate_per_1200mV_64K_1.mat  (periodic excitation, 2 periods)
+#       Al_plate_per_1200mV_128K_1.mat (arbitrary excitation, 1 period)
+#   plus ReadMeFirst.m / HandleTheData.m describing the format.
+# Each .mat holds a nested struct `data` with 4-D MIMO arrays
+#   data.u, data.y : (nu=2, M=2 experiments, 1, N)  forces / accelerations
+#   data.Ts        : sampling period
+# We extract one SISO input/output slice for the ARX/RLS pipeline (see below).
+MIMO_AL_DATA_DIR = os.path.join(HERE, "data", "MIMO_Al_benchmark_data")
+
+# SISO slice + scaling used for Activity 2 (0-based input/output indices).
+#   Charge-amplifier gains from HandleTheData.m: ScaleIn=[3.16, 316],
+#   ScaleOut=[3.16, 10].  We divide the measured signals by these gains.
+_MIMO_SCALE_IN = np.array([3.16, 316.0])
+_MIMO_SCALE_OUT = np.array([3.16, 10.0])
+_MIMO_IU = 0          # input  channel (0 or 1)
+_MIMO_IY = 0          # output channel (0 or 1)
+_MIMO_EXPERIMENT = 0  # realisation: 0 = identification, 1 = validation
+_MIMO_FILE = "Al_plate_per_1200mV_64K_1.mat"  # periodic excitation set
 
 # Activity 3: Wind turbine blade damage detection
 #   Data is auto-downloaded from Zenodo (record 3229743) on first run.
@@ -322,72 +335,70 @@ def activity1():
 
 
 # ===========================================================================
-# Activity 2 - IFAC SYSID 2015 benchmark (LTV system, ramp scheduling)
+# Activity 2 - MIMO Aluminium-plate benchmark (SISO slice, RLS)
 # ===========================================================================
 
-def _load_ifac_data(data_dir):
-    """Load IFAC SYSID 2015 benchmark data.
+def _load_mimo_al_data(data_dir,
+                       fname=_MIMO_FILE,
+                       iu=_MIMO_IU,
+                       iy=_MIMO_IY,
+                       experiment=_MIMO_EXPERIMENT):
+    """Load one SISO slice of the MIMO Aluminium-plate benchmark.
 
-    The benchmark ZIP from KTH contains several CSV/mat files.  The ramp-
-    scheduling dataset is typically named 'uRamp.csv' / 'yRamp.csv' or
-    stored in a sub-folder.  Adjust the filename constants below to match
-    the actual files you downloaded.
+    The .mat file stores a nested MATLAB struct `data` with fields
+    u, y, r, Ts, N, ExcitedHarm.  The forces (u) and accelerations (y) are
+    4-D arrays shaped (nu, M, 1, N): nu=2 inputs, M=2 independent
+    experiments, N time samples (concatenated periods).  We pick a single
+    input/output channel and a single experiment, undo the charge-amplifier
+    gains, and return flat 1-D signals for the ARX/RLS pipeline.
+
+    Parameters
+    ----------
+    fname      : .mat file inside data_dir
+    iu, iy     : 0-based input / output channel indices (each 0 or 1)
+    experiment : 0 = identification realisation, 1 = validation realisation
 
     Returns (u, y, ts) or raises FileNotFoundError with instructions.
     """
-    # Common file naming conventions found in the benchmark package
-    candidates_u = ["uRamp.csv", "u_ramp.csv", "u_ramp.mat",
-                    "Benchmark_EEG.csv", "dataBenchmark.csv"]
-    candidates_y = ["yRamp.csv", "y_ramp.csv", "y_ramp.mat"]
+    path = os.path.join(data_dir, fname)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"MIMO Al-plate data not found at '{path}'.\n"
+            f"  Place the benchmark .mat files in '{data_dir}' and set\n"
+            "  MIMO_AL_DATA_DIR / _MIMO_FILE in this script accordingly."
+        )
 
-    # Try CSV variants first
-    for fu, fy in zip(candidates_u, candidates_y):
-        path_u = os.path.join(data_dir, fu)
-        path_y = os.path.join(data_dir, fy)
-        if os.path.isfile(path_u) and os.path.isfile(path_y):
-            u = np.loadtxt(path_u, delimiter=",")
-            y = np.loadtxt(path_y, delimiter=",")
-            ts = 1.0 / 500.0   # IFAC benchmark sample rate: 500 Hz
-            return u.ravel(), y.ravel(), ts
+    from scipy.io import loadmat
+    mat = loadmat(path, struct_as_record=False, squeeze_me=False)
+    data = mat["data"][0, 0]
 
-    # Try scipy.io.loadmat for .mat files
-    try:
-        from scipy.io import loadmat
-        for fname in os.listdir(data_dir):
-            if fname.endswith(".mat"):
-                mat = loadmat(os.path.join(data_dir, fname))
-                if "u" in mat and "y" in mat:
-                    u = mat["u"].ravel().astype(float)
-                    y = mat["y"].ravel().astype(float)
-                    ts = float(mat.get("Ts", [[1.0 / 500.0]])[0][0])
-                    return u, y, ts
-    except Exception:
-        pass
+    # u, y : (nu, M, 1, N) – select channel (iu/iy) and experiment, undo gains
+    u = np.asarray(data.u[iu, experiment, 0, :], dtype=float) / _MIMO_SCALE_IN[iu]
+    y = np.asarray(data.y[iy, experiment, 0, :], dtype=float) / _MIMO_SCALE_OUT[iy]
+    ts = float(np.ravel(data.Ts)[0])
 
-    raise FileNotFoundError(
-        f"IFAC 2015 data not found in '{data_dir}'.\n"
-        "  1. Download the benchmark data from:\n"
-        "       https://www.kth.se/social/group/system-identificatio/page/benchmark-problems/\n"
-        "  2. Extract the ZIP and set IFAC_DATA_DIR in this script to that folder."
-    )
+    return u.ravel(), y.ravel(), ts
 
 
 def activity2():
-    """IFAC SYSID 2015 benchmark: RLS on a Linear Time-Varying system."""
+    """MIMO Al-plate benchmark: RLS on one SISO input/output slice."""
     print("=" * 70)
-    print("ACTIVITY 2 - IFAC SYSID 2015 LTV benchmark (ramp scheduling)")
+    print("ACTIVITY 2 - MIMO Aluminium-plate benchmark (SISO slice, RLS)")
     print("=" * 70)
 
     try:
-        u, y, ts = _load_ifac_data(IFAC_DATA_DIR)
+        u, y, ts = _load_mimo_al_data(MIMO_AL_DATA_DIR)
     except FileNotFoundError as exc:
         print(f"[Activity 2] SKIPPED – {exc}")
         return
 
     n = u.size
-    print(f"Samples: {n},  Ts = {ts:.6f} s  ({n * ts:.1f} s total)")
+    print(f"File: {_MIMO_FILE}  |  input u[{_MIMO_IU}] -> output y[{_MIMO_IY}]  "
+          f"(experiment {_MIMO_EXPERIMENT})")
+    print(f"Samples: {n},  Ts = {ts:.6f} s  ({n * ts:.1f} s total, "
+          f"fs = {1.0/ts:.1f} Hz)")
 
-    # Model orders suggested by Figure 2 in the IFAC paper (2nd order LTV)
+    # Candidate ARX orders / forgetting factors for the plate dynamics
     experiments = [
         dict(label="n_a=2 n_b=2 lam=0.98", n_a=2, n_b=2, lam=0.98),
         dict(label="n_a=2 n_b=2 lam=0.995", n_a=2, n_b=2, lam=0.995),
@@ -439,9 +450,9 @@ def activity2():
     axes[-1].set_ylabel("y")
     axes[-1].set_xlabel("time [s]")
     axes[-1].legend(fontsize=8)
-    axes[0].set_title(f"Activity 2 – IFAC 2015 LTV benchmark  [{best['label']}]")
+    axes[0].set_title(f"Activity 2 – MIMO Al-plate benchmark  [{best['label']}]")
     fig.tight_layout()
-    fname = os.path.join(HERE, "act2_ifac_rls.png")
+    fname = os.path.join(HERE, "act2_mimo_al_rls.png")
     fig.savefig(fname, dpi=120)
     print(f"Saved: {fname}")
 
@@ -456,7 +467,7 @@ def activity2():
     ax2.set_title("Activity 2 – OSA comparison across configurations")
     ax2.legend(fontsize=7)
     fig2.tight_layout()
-    fname2 = os.path.join(HERE, "act2_ifac_comparison.png")
+    fname2 = os.path.join(HERE, "act2_mimo_al_comparison.png")
     fig2.savefig(fname2, dpi=120)
     print(f"Saved: {fname2}")
 
@@ -470,8 +481,43 @@ _ZENODO_URL_R = "https://zenodo.org/records/3229743/files/Case_R_(+00).zip?downl
 _ZENODO_URL_L = "https://zenodo.org/records/3229743/files/Case_L_(+00).zip?download=1"
 
 
+# Which excitation to identify on.  Each case folder holds many .lvm files
+# (white_noise_1..20, sine_sweep, temperature_compensation); the RLS pipeline
+# assumes broadband white-noise excitation, so we deliberately select a
+# white-noise record rather than whatever os.walk happens to list first.
+_LVM_PREFERRED = "white_noise_1.lvm"
+
+
+def _pick_lvm(extract_dir):
+    """Deterministically choose one .lvm under extract_dir.
+
+    Prefers `_LVM_PREFERRED`, then any `white_noise_*.lvm` (sorted), and only
+    falls back to any other .lvm (sorted) if no white-noise file exists.
+    Returns an absolute path or None.
+    """
+    all_lvm = []
+    for root, _, files in os.walk(extract_dir):
+        for f in files:
+            if f.lower().endswith(".lvm"):
+                all_lvm.append(os.path.join(root, f))
+    if not all_lvm:
+        return None
+    all_lvm.sort()
+
+    exact = [p for p in all_lvm if os.path.basename(p) == _LVM_PREFERRED]
+    if exact:
+        return exact[0]
+    white = [p for p in all_lvm if os.path.basename(p).lower().startswith("white_noise")]
+    if white:
+        return white[0]
+    return all_lvm[0]
+
+
 def _ensure_wind_data(data_dir):
-    """Download and extract wind turbine ZIPs from Zenodo if not already present.
+    """Locate the wind turbine .lvm files, extracting/downloading if needed.
+
+    Uses any zip already present in data_dir (the Zenodo files keep their
+    original names, e.g. 'Case_R_(+00).zip'); only downloads when missing.
 
     Returns (lvm_path_R, lvm_path_L) absolute paths to the .lvm files.
     """
@@ -482,47 +528,33 @@ def _ensure_wind_data(data_dir):
 
     results = []
     for condition, url, zip_name, folder_name in [
-        ("R", _ZENODO_URL_R, "Case_R_00.zip", "Case_R_(+00)"),
-        ("L", _ZENODO_URL_L, "Case_L_00.zip", "Case_L_(+00)"),
+        ("R", _ZENODO_URL_R, "Case_R_(+00).zip", "Case_R_(+00)"),
+        ("L", _ZENODO_URL_L, "Case_L_(+00).zip", "Case_L_(+00)"),
     ]:
         zip_path = os.path.join(data_dir, zip_name)
         extract_dir = os.path.join(data_dir, folder_name)
 
-        # Search for the .lvm file under the extracted folder
-        lvm_path = None
-        if os.path.isdir(extract_dir):
-            for root, _, files in os.walk(extract_dir):
-                for f in files:
-                    if f.lower().endswith(".lvm"):
-                        lvm_path = os.path.join(root, f)
-                        break
-                if lvm_path:
-                    break
+        # 1. Already extracted?
+        lvm_path = _pick_lvm(extract_dir) if os.path.isdir(extract_dir) else None
 
         if lvm_path is None:
-            # Download ZIP
+            # 2. Download the ZIP only if it is not already on disk.
             if not os.path.isfile(zip_path):
                 print(f"  Downloading Case {condition} from Zenodo (~500 MB – 1.7 GB)...")
                 urllib.request.urlretrieve(url, zip_path)
                 print(f"  Download complete: {zip_path}")
-            # Extract
+            # 3. Extract and search again.
             print(f"  Extracting {zip_name} ...")
             with zipfile.ZipFile(zip_path, "r") as zf:
                 zf.extractall(data_dir)
-            # Search again
-            for root, _, files in os.walk(extract_dir):
-                for f in files:
-                    if f.lower().endswith(".lvm"):
-                        lvm_path = os.path.join(root, f)
-                        break
-                if lvm_path:
-                    break
+            lvm_path = _pick_lvm(extract_dir)
 
         if lvm_path is None:
             raise FileNotFoundError(
                 f"Could not find a .lvm file under '{extract_dir}' "
-                f"after downloading Case {condition}."
+                f"for Case {condition}."
             )
+        print(f"  Case {condition}: using {os.path.relpath(lvm_path, data_dir)}")
         results.append(lvm_path)
 
     return results[0], results[1]
@@ -541,7 +573,9 @@ def _load_lvm(path):
     try:
         import lvm_read
     except ImportError as exc:
-        raise SystemExit(
+        # Raise ImportError (not SystemExit) so activity3's `except Exception`
+        # can skip the activity gracefully instead of killing the whole script.
+        raise ImportError(
             "The 'lvm_read' package is required for Activity 3.\n"
             "Install it with:  pip install lvm_read"
         ) from exc
